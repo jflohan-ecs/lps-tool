@@ -4,9 +4,10 @@ State machine that enforces the LPS constitution invariants.
 This is the core enforcement mechanism - all state transitions MUST go through here.
 """
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 from sqlalchemy.orm import Session
 from app.models.domain import WorkItem, Constraint, Commitment, LearningSignal
+from app.models.audit import AuditEvent, AuditEventType
 from app.models.enums import (
     WorkItemState,
     ConstraintStatus,
@@ -31,6 +32,30 @@ class StateMachine:
 
     def __init__(self, db: Session):
         self.db = db
+
+    def _audit(
+        self,
+        event_type: str,
+        entity_type: str,
+        entity_id: str,
+        user_id: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Internal audit logging method.
+
+        Creates an immutable, append-only audit event.
+        Per repair constitution: audit logging is internal and non-interactive.
+        """
+        audit_event = AuditEvent(
+            event_type=event_type,
+            entity_type=entity_type,
+            entity_id=str(entity_id),
+            user_id=user_id,
+            payload_json=payload or {}
+        )
+        self.db.add(audit_event)
+        # Note: commit happens at the end of the parent transaction
 
     def calculate_readiness(self, work_item: WorkItem) -> WorkItemState:
         """
@@ -99,6 +124,21 @@ class StateMachine:
         self.db.commit()
         self.db.refresh(constraint)
 
+        # Audit: constraint created
+        self._audit(
+            event_type=AuditEventType.CONSTRAINT_CREATED,
+            entity_type="Constraint",
+            entity_id=constraint.id,
+            user_id=None,  # User ID not provided in current interface
+            payload={
+                "work_item_id": work_item.id,
+                "type": constraint_type,
+                "description": description,
+                "status": ConstraintStatus.OPEN.value
+            }
+        )
+        self.db.commit()
+
         # Recalculate readiness (adding Open constraint may change Ready → Not Ready)
         self.update_work_item_state(work_item)
 
@@ -120,6 +160,20 @@ class StateMachine:
         constraint.cleared_at = datetime.utcnow()
         self.db.commit()
 
+        # Audit: constraint cleared
+        self._audit(
+            event_type=AuditEventType.CONSTRAINT_CLEARED,
+            entity_type="Constraint",
+            entity_id=constraint.id,
+            user_id=cleared_by_user_id,
+            payload={
+                "work_item_id": constraint.work_item_id,
+                "type": constraint.type,
+                "cleared_at": constraint.cleared_at.isoformat()
+            }
+        )
+        self.db.commit()
+
         # Recalculate readiness (clearing may change Not Ready → Ready)
         work_item = constraint.work_item
         self.update_work_item_state(work_item)
@@ -133,6 +187,19 @@ class StateMachine:
         constraint.status = ConstraintStatus.OPEN
         constraint.cleared_by_user_id = None
         constraint.cleared_at = None
+        self.db.commit()
+
+        # Audit: constraint reopened
+        self._audit(
+            event_type=AuditEventType.CONSTRAINT_REOPENED,
+            entity_type="Constraint",
+            entity_id=constraint.id,
+            user_id=None,  # No user specified for reopen
+            payload={
+                "work_item_id": constraint.work_item_id,
+                "type": constraint.type
+            }
+        )
         self.db.commit()
 
         # Recalculate readiness (reopening changes Ready → Not Ready)
@@ -177,6 +244,26 @@ class StateMachine:
                 for c in work_item.constraints
                 if c.status == ConstraintStatus.OPEN
             ]
+            open_constraint_ids = [
+                c.id for c in work_item.constraints
+                if c.status == ConstraintStatus.OPEN
+            ]
+
+            # Audit: REFUSAL event (critical per repair constitution)
+            self._audit(
+                event_type=AuditEventType.COMMITMENT_REFUSED_NOT_READY,
+                entity_type="WorkItem",
+                entity_id=work_item.id,
+                user_id=committed_by_user_id,
+                payload={
+                    "work_item_id": work_item.id,
+                    "open_constraint_ids": open_constraint_ids,
+                    "attempted_by_user_id": committed_by_user_id,
+                    "work_item_state": work_item.state.value,
+                    "constraint_count": len(work_item.constraints)
+                }
+            )
+            self.db.commit()
 
             if not work_item.constraints:
                 raise RefusalError(
@@ -208,6 +295,21 @@ class StateMachine:
         self.db.commit()
         self.db.refresh(commitment)
 
+        # Audit: commitment created
+        self._audit(
+            event_type=AuditEventType.COMMITMENT_CREATED,
+            entity_type="Commitment",
+            entity_id=commitment.id,
+            user_id=committed_by_user_id,
+            payload={
+                "work_item_id": work_item.id,
+                "owner_user_id": owner_user_id,
+                "due_at": due_at.isoformat(),
+                "status": CommitmentStatus.ACTIVE.value
+            }
+        )
+        self.db.commit()
+
         return commitment
 
     def complete_commitment(
@@ -237,6 +339,21 @@ class StateMachine:
         commitment.work_item.state = WorkItemState.COMPLETE
         commitment.work_item.updated_at = now
 
+        self.db.commit()
+
+        # Audit: commitment completed
+        self._audit(
+            event_type=AuditEventType.COMMITMENT_COMPLETED,
+            entity_type="Commitment",
+            entity_id=commitment.id,
+            user_id=commitment.owner_user_id,
+            payload={
+                "work_item_id": commitment.work_item_id,
+                "completed_at": now.isoformat(),
+                "due_at": commitment.due_at.isoformat(),
+                "on_time": True
+            }
+        )
         self.db.commit()
 
     def fail_commitment(
@@ -284,7 +401,53 @@ class StateMachine:
         self.db.commit()
         self.db.refresh(learning_signal)
 
+        # Audit: commitment failed
+        self._audit(
+            event_type=AuditEventType.COMMITMENT_FAILED,
+            entity_type="Commitment",
+            entity_id=commitment.id,
+            user_id=commitment.owner_user_id,
+            payload={
+                "work_item_id": commitment.work_item_id,
+                "failed_at": now.isoformat(),
+                "due_at": commitment.due_at.isoformat(),
+                "primary_cause": primary_cause.value,
+                "learning_signal_id": learning_signal.id
+            }
+        )
+        self.db.commit()
+
         return learning_signal
+
+    def attempt_modify_commitment(
+        self,
+        commitment: Commitment,
+        **modifications
+    ) -> None:
+        """
+        Explicit guard against commitment modification.
+
+        Per repair constitution: Commitments are immutable once created.
+        This method exists to ensure immutability holds regardless of call path.
+
+        Raises:
+            ValueError: Always - commitments cannot be modified
+        """
+        # Reject ANY modification attempt
+        forbidden_fields = {"due_at", "work_item_id", "owner_user_id", "committed_by_user_id"}
+        attempted_fields = set(modifications.keys()) & forbidden_fields
+
+        if attempted_fields:
+            raise ValueError(
+                f"IMMUTABILITY VIOLATION: Cannot modify commitment fields: {attempted_fields}. "
+                f"Commitments are immutable once created (Commitment ID: {commitment.id})"
+            )
+
+        # Even if no forbidden fields, reject to prevent future bypass
+        raise ValueError(
+            f"IMMUTABILITY VIOLATION: Commitments cannot be modified after creation "
+            f"(Commitment ID: {commitment.id})"
+        )
 
     def reset_to_intent(self, work_item: WorkItem) -> None:
         """

@@ -5,6 +5,9 @@ from fastapi.responses import HTMLResponse
 
 from app.database import engine, Base
 from app.api.routes import router
+# Import models to register them with SQLAlchemy Base
+from app.models.domain import WorkItem, Constraint, Commitment, LearningSignal
+from app.models.audit import AuditEvent
 
 # Create database tables
 Base.metadata.create_all(bind=engine)

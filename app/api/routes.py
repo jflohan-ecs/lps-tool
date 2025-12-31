@@ -28,7 +28,12 @@ router = APIRouter()
 # WorkItem endpoints
 @router.post("/work-items", response_model=WorkItemResponse, status_code=status.HTTP_201_CREATED)
 def create_work_item(work_item_data: WorkItemCreate, db: Session = Depends(get_db)):
-    """Create a new work item in Intent state."""
+    """
+    Create a new work item in Intent state.
+
+    Post-create readiness evaluation (repair constitution):
+    Immediately evaluates readiness - if zero constraints, transitions to Not Ready.
+    """
     work_item = WorkItem(
         title=work_item_data.title,
         description=work_item_data.description,
@@ -42,6 +47,12 @@ def create_work_item(work_item_data: WorkItemCreate, db: Session = Depends(get_d
     db.add(work_item)
     db.commit()
     db.refresh(work_item)
+
+    # Post-create readiness evaluation (optional per repair constitution)
+    sm = StateMachine(db)
+    sm.update_work_item_state(work_item)
+    db.refresh(work_item)
+
     return work_item
 
 
