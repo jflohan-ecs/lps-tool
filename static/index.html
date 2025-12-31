@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LPS Tool - Production Control</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #f5f5f7;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #1d1d1f;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #6e6e73;
+            margin-bottom: 30px;
+        }
+
+        .panel {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .panel h2 {
+            color: #1d1d1f;
+            margin-bottom: 16px;
+            font-size: 20px;
+        }
+
+        .state-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .state-Intent { background: #e8e8ed; color: #1d1d1f; }
+        .state-Not\ Ready { background: #fff3cd; color: #856404; }
+        .state-Ready { background: #d4edda; color: #155724; }
+        .state-Committed { background: #cfe2ff; color: #084298; }
+        .state-Complete { background: #d1e7dd; color: #0f5132; }
+        .state-Failed { background: #f8d7da; color: #842029; }
+
+        input, textarea, select, button {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 12px;
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        button {
+            background: #0071e3;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #0077ed;
+        }
+
+        button:disabled {
+            background: #d2d2d7;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #6e6e73;
+        }
+
+        .btn-secondary:hover {
+            background: #86868b;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn-success {
+            background: #28a745;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+        }
+
+        .constraint-item {
+            background: #f5f5f7;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .constraint-open {
+            border-left: 4px solid #ffc107;
+        }
+
+        .constraint-cleared {
+            border-left: 4px solid #28a745;
+            opacity: 0.7;
+        }
+
+        .refusal-message {
+            background: #f8d7da;
+            color: #842029;
+            padding: 16px;
+            border-radius: 8px;
+            margin: 12px 0;
+            border-left: 4px solid #dc3545;
+        }
+
+        .success-message {
+            background: #d1e7dd;
+            color: #0f5132;
+            padding: 16px;
+            border-radius: 8px;
+            margin: 12px 0;
+            border-left: 4px solid #28a745;
+        }
+
+        .work-item-card {
+            background: #f5f5f7;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .work-item-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .work-item-card.selected {
+            background: #e3f2fd;
+            border: 2px solid #0071e3;
+        }
+
+        .learning-signal {
+            background: #fff3cd;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border-left: 4px solid #ffc107;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>LPS Tool</h1>
+        <p class="subtitle">Production Control - Readiness, Commitments, Refusal, and Learning</p>
+
+        <div class="grid-2">
+            <div>
+                <!-- Create Work Item -->
+                <div class="panel">
+                    <h2>Create Work Item</h2>
+                    <input type="text" id="title" placeholder="Title (required)" />
+                    <textarea id="description" rows="2" placeholder="Description (optional)"></textarea>
+                    <input type="text" id="location" placeholder="Location (e.g., Grid A1-A5)" />
+                    <input type="text" id="owner" placeholder="Owner User ID" value="user_001" />
+                    <button onclick="createWorkItem()">Create Work Item</button>
+                </div>
+
+                <!-- Work Items List -->
+                <div class="panel">
+                    <h2>Work Items</h2>
+                    <div id="workItemsList"></div>
+                </div>
+            </div>
+
+            <div>
+                <!-- Selected Work Item Details -->
+                <div class="panel" id="workItemDetails" style="display:none;">
+                    <h2 id="detailTitle">Work Item Details</h2>
+                    <div id="detailContent"></div>
+                </div>
+
+                <!-- Learning Signals -->
+                <div class="panel">
+                    <h2>Learning Signals & Drill-down</h2>
+                    <button onclick="loadLearningSignals()" class="btn-secondary">Refresh Learning Signals</button>
+                    <div id="learningSignals"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api';
+        let selectedWorkItemId = null;
+
+        // Create work item
+        async function createWorkItem() {
+            const title = document.getElementById('title').value;
+            const description = document.getElementById('description').value;
+            const location = document.getElementById('location').value;
+            const owner = document.getElementById('owner').value;
+
+            if (!title || !owner) {
+                alert('Title and Owner are required');
+                return;
+            }
+
+            const response = await fetch(`${API_BASE}/work-items`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, description, location, owner_user_id: owner })
+            });
+
+            if (response.ok) {
+                document.getElementById('title').value = '';
+                document.getElementById('description').value = '';
+                document.getElementById('location').value = '';
+                loadWorkItems();
+            }
+        }
+
+        // Load all work items
+        async function loadWorkItems() {
+            const response = await fetch(`${API_BASE}/work-items`);
+            const items = await response.json();
+
+            const list = document.getElementById('workItemsList');
+            if (items.length === 0) {
+                list.innerHTML = '<p style="color:#6e6e73;">No work items yet</p>';
+                return;
+            }
+
+            list.innerHTML = items.map(item => `
+                <div class="work-item-card ${item.id === selectedWorkItemId ? 'selected' : ''}"
+                     onclick="selectWorkItem(${item.id})">
+                    <div class="state-badge state-${item.state}">${item.state}</div>
+                    <div style="font-weight:600;margin-bottom:4px;">${item.title}</div>
+                    <div style="font-size:12px;color:#6e6e73;">${item.location || 'No location'}</div>
+                </div>
+            `).join('');
+        }
+
+        // Select and show work item details
+        async function selectWorkItem(id) {
+            selectedWorkItemId = id;
+            loadWorkItems();
+
+            const response = await fetch(`${API_BASE}/work-items/${id}`);
+            const item = await response.json();
+
+            const constraintsResp = await fetch(`${API_BASE}/work-items/${id}/constraints`);
+            const constraints = await constraintsResp.json();
+
+            const commitmentsResp = await fetch(`${API_BASE}/work-items/${id}/commitments`);
+            const commitments = await commitmentsResp.json();
+
+            document.getElementById('workItemDetails').style.display = 'block';
+            document.getElementById('detailTitle').textContent = item.title;
+
+            let html = `
+                <div class="state-badge state-${item.state}">${item.state}</div>
+                <p style="margin-bottom:16px;color:#6e6e73;">${item.description || 'No description'}</p>
+
+                <h3 style="margin-top:16px;margin-bottom:8px;">Constraints</h3>
+                ${constraints.map(c => `
+                    <div class="constraint-item constraint-${c.status.toLowerCase().replace(' ', '-')}">
+                        <div>
+                            <strong>${c.type}</strong>: ${c.description || 'No description'}
+                            <div style="font-size:12px;color:#6e6e73;">Status: ${c.status}</div>
+                        </div>
+                        ${c.status === 'Open' ? `
+                            <button onclick="clearConstraint(${c.id})" style="width:auto;padding:6px 12px;">Clear</button>
+                        ` : ''}
+                    </div>
+                `).join('') || '<p style="color:#6e6e73;">No constraints</p>'}
+
+                <div style="margin-top:12px;">
+                    <input type="text" id="constraintType" placeholder="Constraint type (e.g., Materials, Access)" />
+                    <textarea id="constraintDesc" rows="2" placeholder="Constraint description"></textarea>
+                    <button onclick="addConstraint(${id})">Add Constraint</button>
+                </div>
+
+                <h3 style="margin-top:24px;margin-bottom:8px;">Commitments</h3>
+                ${commitments.map(c => `
+                    <div class="constraint-item">
+                        <div>
+                            <div><strong>Due:</strong> ${new Date(c.due_at).toLocaleString()}</div>
+                            <div style="font-size:12px;color:#6e6e73;">Status: ${c.status} | By: ${c.committed_by_user_id}</div>
+                        </div>
+                        ${c.status === 'Active' ? `
+                            <div style="width:auto;">
+                                <button onclick="completeCommitment(${c.id})" class="btn-success" style="width:auto;padding:6px 12px;margin-bottom:4px;">Complete</button>
+                                <button onclick="failCommitment(${c.id})" class="btn-danger" style="width:auto;padding:6px 12px;">Fail</button>
+                            </div>
+                        ` : ''}
+                    </div>
+                `).join('') || '<p style="color:#6e6e73;">No commitments</p>'}
+
+                ${item.state === 'Ready' || item.state === 'Not Ready' ? `
+                    <div style="margin-top:12px;">
+                        <input type="datetime-local" id="dueDate" style="margin-bottom:8px;" />
+                        <button onclick="commitWork(${id})" ${item.state !== 'Ready' ? 'disabled' : ''}>
+                            ${item.state === 'Ready' ? 'Create Commitment' : 'Cannot Commit (Not Ready)'}
+                        </button>
+                        <div id="refusalMsg${id}"></div>
+                    </div>
+                ` : ''}
+            `;
+
+            document.getElementById('detailContent').innerHTML = html;
+        }
+
+        // Add constraint
+        async function addConstraint(workItemId) {
+            const type = document.getElementById('constraintType').value;
+            const description = document.getElementById('constraintDesc').value;
+
+            if (!type) {
+                alert('Constraint type is required');
+                return;
+            }
+
+            await fetch(`${API_BASE}/work-items/${workItemId}/constraints`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type, description })
+            });
+
+            selectWorkItem(workItemId);
+        }
+
+        // Clear constraint
+        async function clearConstraint(constraintId) {
+            const userId = document.getElementById('owner').value;
+
+            await fetch(`${API_BASE}/constraints/${constraintId}/clear`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cleared_by_user_id: userId })
+            });
+
+            selectWorkItem(selectedWorkItemId);
+        }
+
+        // Commit work
+        async function commitWork(workItemId) {
+            const dueDate = document.getElementById('dueDate').value;
+            const userId = document.getElementById('owner').value;
+
+            if (!dueDate) {
+                alert('Due date is required');
+                return;
+            }
+
+            const response = await fetch(`${API_BASE}/work-items/${workItemId}/commit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    committed_by_user_id: userId,
+                    owner_user_id: userId,
+                    due_at: new Date(dueDate).toISOString()
+                })
+            });
+
+            if (response.status === 403) {
+                const refusal = await response.json();
+                document.getElementById(`refusalMsg${workItemId}`).innerHTML = `
+                    <div class="refusal-message">
+                        <strong>REFUSAL</strong><br/>
+                        ${refusal.detail.message}
+                    </div>
+                `;
+            } else {
+                selectWorkItem(workItemId);
+            }
+        }
+
+        // Complete commitment
+        async function completeCommitment(commitmentId) {
+            await fetch(`${API_BASE}/commitments/${commitmentId}/complete`, {
+                method: 'PUT'
+            });
+            selectWorkItem(selectedWorkItemId);
+        }
+
+        // Fail commitment
+        async function failCommitment(commitmentId) {
+            const cause = prompt('Primary cause:', 'Materials');
+            const notes = prompt('Notes (optional):');
+
+            if (!cause) return;
+
+            await fetch(`${API_BASE}/commitments/${commitmentId}/fail`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ primary_cause: cause, notes })
+            });
+
+            selectWorkItem(selectedWorkItemId);
+            loadLearningSignals();
+        }
+
+        // Load learning signals
+        async function loadLearningSignals() {
+            const drilldownResp = await fetch(`${API_BASE}/learning-signals/drilldown`);
+            const drilldown = await drilldownResp.json();
+
+            const container = document.getElementById('learningSignals');
+            if (drilldown.length === 0) {
+                container.innerHTML = '<p style="color:#6e6e73;margin-top:12px;">No learning signals yet</p>';
+                return;
+            }
+
+            container.innerHTML = '<h3 style="margin-top:16px;margin-bottom:8px;">Aggregated by Cause & Location</h3>' +
+                drilldown.map(d => `
+                    <div class="learning-signal">
+                        <div style="font-weight:600;">${d.primary_cause}</div>
+                        <div style="font-size:12px;color:#6e6e73;">
+                            Location: ${d.location} | System: ${d.reference_system}
+                        </div>
+                        <div style="margin-top:4px;">
+                            <strong>Count:</strong> ${d.count} |
+                            <strong>Latest:</strong> ${new Date(d.latest_occurrence).toLocaleDateString()}
+                        </div>
+                    </div>
+                `).join('');
+        }
+
+        // Initialize
+        loadWorkItems();
+        loadLearningSignals();
+
+        // Auto-refresh every 5 seconds
+        setInterval(() => {
+            loadWorkItems();
+            if (selectedWorkItemId) {
+                selectWorkItem(selectedWorkItemId);
+            }
+        }, 5000);
+    </script>
+</body>
+</html>
